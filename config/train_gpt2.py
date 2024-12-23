@@ -2,9 +2,15 @@
 # launch as the following (e.g. in a screen session) and wait ~5 days:
 # $ torchrun --standalone --nproc_per_node=8 train.py config/train_gpt2.py
 
+import time
+
+
 wandb_log = True
-wandb_project = 'owt'
-wandb_run_name='gpt2-124M'
+wandb_key = '1c1fa66d79864363e5f33bb705a768da6cf094e5'
+wandb_project = 'GPT2'
+wandb_run_name= 'run' + str(time.time())
+
+device = 'cuda'
 
 # these make the total batch size be ~0.5M
 # 12 batch size * 1024 block size * 5 gradaccum * 8 GPUs = 491,520

@@ -80,6 +80,7 @@ config = {k: globals()[k] for k in config_keys} # will be useful for logging
 
 # various inits, derived attributes, I/O setup
 ddp = int(os.environ.get('RANK', -1)) != -1 # is this a ddp run?
+print(f"DDP RUNNING: {ddp}")
 if ddp:
     init_process_group(backend=backend)
     ddp_rank = int(os.environ['RANK'])
@@ -128,6 +129,8 @@ def get_batch(split):
         x, y = x.pin_memory().to(device, non_blocking=True), y.pin_memory().to(device, non_blocking=True)
     else:
         x, y = x.to(device), y.to(device)
+
+    print("Get Batch!\n")
     return x, y
 
 # init these up here, can override if init_from='resume' (i.e. from a checkpoint)
@@ -202,10 +205,12 @@ if init_from == 'resume':
 checkpoint = None # free up memory
 
 # compile the model
-if compile:
+if compile and torch.backends.mps.is_available():
+    print("Compiling the model is skipped due to MPS backend issues.")
+elif compile:
     print("compiling the model... (takes a ~minute)")
     unoptimized_model = model
-    model = torch.compile(model) # requires PyTorch 2.0
+    model = torch.compile(model, backend='inductor') # requires PyTorch 2.0
 
 # wrap model into DDP container
 if ddp:
