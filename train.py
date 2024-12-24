@@ -131,7 +131,6 @@ def get_batch(split):
     else:
         x, y = x.to(device), y.to(device)
 
-    print("Get Batch!\n")
     return x, y
 
 # init these up here, can override if init_from='resume' (i.e. from a checkpoint)
@@ -321,6 +320,11 @@ while True:
     # flush the gradients as soon as we can, no need for this memory anymore
     optimizer.zero_grad(set_to_none=True)
 
+    if device == 'cuda':
+        torch.cuda.empty_cache()
+    elif device == 'mps':
+        torch.mps.empty_cache()
+
     # timing and logging
     t1 = time.time()
     dt = t1 - t0
@@ -334,6 +338,7 @@ while True:
             running_mfu = mfu if running_mfu == -1.0 else 0.9*running_mfu + 0.1*mfu
         print(f"iter {iter_num}: loss {lossf:.4f}, time {dt*1000:.2f}ms, mfu {running_mfu*100:.2f}%")
     iter_num += 1
+    print(f"iter {iter_num}: loss {lossf:.4f}, time {dt*1000:.2f}ms")
     local_iter_num += 1
 
     # termination conditions
