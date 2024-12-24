@@ -231,10 +231,7 @@ def estimate_loss():
         out[split] = losses.mean()
     model.train()
 
-    if device == 'cuda':
-        torch.cuda.empty_cache()
-    elif device == 'mps':
-        torch.mps.empty_cache()
+
     return out
 
 # learning rate decay scheduler (cosine with warmup)
@@ -274,6 +271,12 @@ while True:
     # evaluate the loss on train/val sets and write checkpoints
     if iter_num % eval_interval == 0 and master_process:
         losses = estimate_loss()
+
+        if device == 'cuda':
+            torch.cuda.empty_cache()
+        elif device == 'mps':
+            torch.mps.empty_cache()
+
         print(f"step {iter_num}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
         if wandb_log:
             wandb.log({
