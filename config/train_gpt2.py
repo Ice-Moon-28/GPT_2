@@ -10,16 +10,16 @@ wandb_key = '1c1fa66d79864363e5f33bb705a768da6cf094e5'
 wandb_project = 'GPT2'
 wandb_run_name= 'run' + str(time.time())
 
-device = 'cuda'
+device = 'mps'
 
 
-data_dir = '/kaggle/input/openwebtext'
+data_dir = 'data/openwebtext'
 compile = False
 # these make the total batch size be ~0.5M
 # 12 batch size * 1024 block size * 5 gradaccum * 8 GPUs = 491,520
 batch_size = 12
 block_size = 1024
-gradient_accumulation_steps = 5 * 8
+gradient_accumulation_steps = 5
 
 # this makes total number of tokens be 300B
 max_iters = 600000
