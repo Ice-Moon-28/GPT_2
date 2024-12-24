@@ -55,6 +55,10 @@ if __name__ == '__main__':
         num_proc=num_proc,
     )
 
+
+    for split_name, dataset in tokenized.items():
+        dataset.to_parquet(f"{split_name}_tokenized.parquet")
+
     # concatenate all the ids in each dataset into one large file we can use for training
     for split, dset in tokenized.items():
         arr_len = np.sum(dset['len'], dtype=np.uint64)
@@ -78,4 +82,4 @@ if __name__ == '__main__':
     # val has ~4M tokens (4,434,897)
 
     # to read the bin files later, e.g. with numpy:
-    # m = np.memmap('train.bin', dtype=np.uint16, mode='r')
+    m = np.memmap('train.bin', dtype=np.uint16, mode='r')
