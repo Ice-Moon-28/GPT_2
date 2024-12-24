@@ -10,7 +10,7 @@ wandb_key = '1c1fa66d79864363e5f33bb705a768da6cf094e5'
 wandb_project = 'GPT2'
 wandb_run_name= 'run' + str(time.time())
 
-device = 'mps'
+device = 'cuda'
 
 
 data_dir = 'data/openwebtext'
