@@ -340,6 +340,8 @@ while True:
     elif device == 'mps':
         torch.mps.empty_cache()
 
+    
+    print_gpu_info(device)
     # timing and logging
     t1 = time.time()
     dt = t1 - t0
