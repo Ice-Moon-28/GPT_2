@@ -387,8 +387,6 @@ def main():
     
     init_wandb(wandb_log, wandb_project, wandb_run_name, config=config, master_process=master_process)
 
-    print_gpu_info(device)
-
     train(
         model=model,
         optimizer=optimizer,
