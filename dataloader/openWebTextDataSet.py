@@ -13,14 +13,8 @@ class MemmapDataset(Dataset):
         return len(self.data) - self.block_size
 
     def __getitem__(self, idx):
-    # 如果 idx 是一个 tensor，确保它是整数类型
-        if isinstance(idx, torch.Tensor):
-            idx = idx.long()  # 将 idx 转换为 long 类型（索引必须是 long）
-
-        # 获取输入和目标块
-        x = torch.stack([torch.from_numpy(self.data[i:i + self.block_size].astype(np.int64)) for i in idx])
-        y = torch.stack([torch.from_numpy(self.data[i + 1:i + 1 + self.block_size].astype(np.int64)) for i in idx])
-        
+        x = torch.from_numpy(self.data[idx:idx + self.block_size].astype(np.int64))
+        y = torch.from_numpy(self.data[idx + 1:idx + 1 + self.block_size].astype(np.int64))
         return x, y
 
 def create_dataset(split, data_dir, block_size):

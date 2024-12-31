@@ -1,13 +1,25 @@
-from transformers import GPT2LMHeadModel, GPT2Config
 
-model_args = GPT2Config(
-    vocab_size=50257,  # 根据数据集大小调整
-    n_positions=1024,  # 输入序列的最大长度
-    n_ctx=1024,  # 上下文窗口大小
-    n_embd=768,  # 嵌入层大小
-    n_layer=12,  # Transformer 层数
-    n_head=12,  # 自注意力头数
-    dropout=0.1,  # Dropout 比例
-)
 
-print(model_args['vocab_size'])
+import os
+
+from tqdm import tqdm
+from dataloader.openWebTextDataSet import create_dataloader
+
+dataset = 'openwebtext'
+data_dir = os.path.join('data', dataset)
+gradient_accumulation_steps = 5 * 8 # used to simulate larger batch sizes
+batch_size = 12 # if gradient_accumulation_steps > 1, this is the micro-batch size
+block_size = 1024
+device = 'mps'
+num_workers = 0
+
+
+if __name__ == '__main__':
+    train_loader = create_dataloader('train', data_dir, block_size, batch_size, device, num_workers=num_workers)
+
+    print(train_loader, '1')
+
+    for x, y in tqdm(train_loader, desc="Loading data"):
+        print(train_loader, '2')
+        print(x.shape, y.shape)
+        break

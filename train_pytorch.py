@@ -33,8 +33,11 @@ from torch.distributed import init_process_group, destroy_process_group
 from model import GPTConfig, GPT
 from model_gpt2.gpt2 import get_model
 from model_gpt2.scheduler import CustomLRScheduler
+from util.cpu import print_memory_usage
 from util.gpu import print_gpu_info
 from transformers import GPT2LMHeadModel, GPT2Config
+import memory_profiler
+from memory_profiler import profile
 
 # -----------------------------------------------------------------------------
 # default config values designed to train a gpt2 (124M) on OpenWebText
@@ -99,6 +102,10 @@ scaler = torch.cuda.amp.GradScaler(enabled=(dtype == 'float16'))
 
 iter_num = 0
 best_val_loss = 1e9
+
+from torch.profiler import profile, record_function, ProfilerActivity
+
+
 
 def init_model(init_from='scratch'):
     if init_from == 'scratch':
@@ -201,15 +208,23 @@ def estimate_loss(model, train_dataloader, eval_dataloader, eval_iters=200, devi
     return out
 
 def get_batch(dataloader, device_type):
+
+    import pdb; pdb.set_trace()
+    
     x, y = next(iter(dataloader))
+
+    import pdb; pdb.set_trace()
+
+    print("==== 3 =====")
     if device_type == 'cuda':
         # pin arrays x,y, which allows us to move them to GPU asynchronously (non_blocking=True)
         x, y = x.pin_memory().to(device, non_blocking=True), y.pin_memory().to(device, non_blocking=True)
     else:
         x, y = x.to(device), y.to(device)
+
+    print("==== 4 =====")    
   
     return x, y
-
 def train(
         model,
         optimizer,
@@ -244,8 +259,15 @@ def train(
     raw_model = model.module if ddp else model
 
     for batch_idx in range(num_iterions):
+        print_memory_usage()
+
+        print("==== 1 =====")
     
         for micro_step in range(gradient_accumulation_steps):
+            print_memory_usage()
+
+
+            print("==== 2 =====")
             if ddp:
                 # in DDP training we only need to sync gradients at the last micro step.
                 # the official way to do this is with model.no_sync() context manager, but
@@ -255,14 +277,23 @@ def train(
             with ctx:
                 X, Y = get_batch(train_dataloader, device_type)
 
+                print("==== 3 =====")
+
                 output = model(X, labels=Y) 
 
                 loss = output.loss
 
                 loss = loss / gradient_accumulation_steps # scale the loss to account for gradient accumulation
 
+                print_memory_usage()
+
+                print("==== 2 =====")
             
                 scaler.scale(loss).backward()
+
+                print_memory_usage()
+
+                print("==== 3 =====")
         if grad_clip != 0.0:
             scaler.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
@@ -271,6 +302,11 @@ def train(
         scaler.update()
 
         scheduler.step()
+
+        print_memory_usage()
+
+        print("==== 7 =====")
+
 
         if iter_num % eval_interval == 0 and master_process:
             losses = estimate_loss(model=model, train_dataloader=train_dataloader, eval_dataloader=val_dataloader, device_type=device_type)
@@ -371,6 +407,7 @@ def main():
 
     model = init_model(init_from=init_from)
 
+
     if compile and torch.backends.mps.is_available():
         print("Compiling the model is skipped due to MPS backend issues.")
     elif compile:
@@ -386,6 +423,7 @@ def main():
                               learning_rate=learning_rate, min_lr=min_lr)
     
     init_wandb(wandb_log, wandb_project, wandb_run_name, config=config, master_process=master_process)
+
 
     train(
         model=model,
@@ -409,7 +447,16 @@ def main():
 
 
 if __name__ == '__main__':
-    main() 
+    try:
+        with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA]) as prof:
+            with record_function("model_inference"):
+                main() 
+                pass
+        print(prof.key_averages().table())
+    except Exception as e:
+        print(prof.key_averages().table())
+        pass
+    
     
 
     

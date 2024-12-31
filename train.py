@@ -199,7 +199,7 @@ model.to(device)
 print_gpu_info(device)
 
 # initialize a GradScaler. If enabled=False scaler is a no-op
-scaler = torch.cuda.amp.GradScaler(enabled=(dtype == 'float16'))
+scaler = torch.GradScaler(enabled=(device.type in ['cuda', 'mps'] and dtype == torch.float16))
 
 # optimizer
 optimizer = model.configure_optimizers(weight_decay, learning_rate, (beta1, beta2), device_type)
