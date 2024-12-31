@@ -32,4 +32,4 @@ log_interval = 10
 
 # weight decay
 weight_decay = 1e-1
-num_workers = 1
+num_workers = 0
