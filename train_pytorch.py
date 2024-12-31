@@ -98,7 +98,7 @@ if os.path.exists(meta_path):
     meta_vocab_size = meta['vocab_size']
     print(f"found vocab_size = {meta_vocab_size} (inside {meta_path})")
 
-scaler = torch.cuda.amp.GradScaler(enabled=(dtype == 'float16'))
+scaler = torch.amp.GradScaler(device=device, enabled=(dtype == 'float16'))
 
 iter_num = 0
 best_val_loss = 1e9
@@ -120,6 +120,18 @@ def init_model(init_from='scratch'):
         )
 
         model = get_model(model_args)
+
+    # model_args = dict(n_layer=n_layer, n_head=n_head, n_embd=n_embd, block_size=block_size,
+    #               bias=bias, vocab_size=None, dropout=dropout) # start with model_args from command line
+    # if init_from == 'scratch':
+    #     # init a new model from scratch
+    #     print("Initializing a new model from scratch")
+    #     # determine the vocab size we'll use for from-scratch training
+    #     if meta_vocab_size is None:
+    #         print("defaulting to vocab_size of GPT-2 to 50304 (50257 rounded up for efficiency)")
+    #     model_args['vocab_size'] = meta_vocab_size if meta_vocab_size is not None else 50304
+    #     gptconf = GPTConfig(**model_args)
+    #     model = GPT(gptconf)
 
     elif init_from == 'resume':
         print(f"Resuming training from {out_dir}")
@@ -178,59 +190,44 @@ def init_wandb(wandb_log, wandb_project, wandb_run_name, config, master_process)
     wandb.init(project=wandb_project, name=wandb_run_name, config=config)
 
 @torch.no_grad()
-def estimate_loss(model, train_dataloader, eval_dataloader, eval_iters=200, device_type='cuda'):
+def estimate_loss(model, ctx):
     out = {}
     model.eval()
-
-    losses = torch.zeros(eval_iters)
-
-    for batch_idx in range(eval_iters):
-        if batch_idx <= eval_iters:
-            x, y = get_batch(train_dataloader, device_type=device_type)
-            loss = model(x, y)
-            loss = loss.item()
-            losses[batch_idx] = loss.item()
-
-
-    out['train'] = losses.mean()
-    
-    for batch_idx in range(eval_iters):
-        if batch_idx <= eval_iters:
-            x, y = get_batch(eval_dataloader, device_type=device_type)
-            loss = model(x, y)
-            loss = loss.item()
-            losses[batch_idx] = loss.item()
-
-    out['val'] = losses.mean()
-
+    for split in ['train', 'val']:
+        losses = torch.zeros(eval_iters)
+        for k in range(eval_iters):
+            X, Y = get_batch(split)
+            with ctx:
+                _, loss = model(X, Y)
+            losses[k] = loss.item()
+        out[split] = losses.mean()
     model.train()
+
 
     return out
 
-def get_batch(dataloader, device_type):
-
-    import pdb; pdb.set_trace()
-    
-    x, y = next(iter(dataloader))
-
-    import pdb; pdb.set_trace()
-
-    print("==== 3 =====")
+def get_batch(split, device_type='cuda'):
+    # We recreate np.memmap every batch to avoid a memory leak, as per
+    # https://stackoverflow.com/questions/45132940/numpy-memmap-memory-usage-want-to-iterate-once/61472122#61472122
+    if split == 'train':
+        data = np.memmap(os.path.join(data_dir, 'train.bin'), dtype=np.uint16, mode='r')
+    else:
+        data = np.memmap(os.path.join(data_dir, 'val.bin'), dtype=np.uint16, mode='r')
+    ix = torch.randint(len(data) - block_size, (batch_size,))
+    x = torch.stack([torch.from_numpy((data[i:i+block_size]).astype(np.int64)) for i in ix])
+    y = torch.stack([torch.from_numpy((data[i+1:i+1+block_size]).astype(np.int64)) for i in ix])
     if device_type == 'cuda':
         # pin arrays x,y, which allows us to move them to GPU asynchronously (non_blocking=True)
         x, y = x.pin_memory().to(device, non_blocking=True), y.pin_memory().to(device, non_blocking=True)
     else:
         x, y = x.to(device), y.to(device)
 
-    print("==== 4 =====")    
-  
     return x, y
+
 def train(
         model,
         optimizer,
         scheduler,
-        train_dataloader,
-        val_dataloader,
         scaler,
         num_iterions,
         log_interval,
@@ -259,15 +256,11 @@ def train(
     raw_model = model.module if ddp else model
 
     for batch_idx in range(num_iterions):
+
         print_memory_usage()
 
-        print("==== 1 =====")
-    
         for micro_step in range(gradient_accumulation_steps):
-            print_memory_usage()
-
-
-            print("==== 2 =====")
+            X, Y = get_batch('train', device_type)
             if ddp:
                 # in DDP training we only need to sync gradients at the last micro step.
                 # the official way to do this is with model.no_sync() context manager, but
@@ -275,41 +268,26 @@ def train(
                 # looking at the source of that context manager, it just toggles this variable
                 model.require_backward_grad_sync = (micro_step == gradient_accumulation_steps - 1)
             with ctx:
-                X, Y = get_batch(train_dataloader, device_type)
-
-                print("==== 3 =====")
-
                 output = model(X, labels=Y) 
-
                 loss = output.loss
-
                 loss = loss / gradient_accumulation_steps # scale the loss to account for gradient accumulation
-
-                print_memory_usage()
-
-                print("==== 2 =====")
-            
                 scaler.scale(loss).backward()
 
-                print_memory_usage()
-
-                print("==== 3 =====")
         if grad_clip != 0.0:
             scaler.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+
+        print_memory_usage()
 
         scaler.step(optimizer)
         scaler.update()
 
         scheduler.step()
 
-        print_memory_usage()
-
-        print("==== 7 =====")
 
 
         if iter_num % eval_interval == 0 and master_process:
-            losses = estimate_loss(model=model, train_dataloader=train_dataloader, eval_dataloader=val_dataloader, device_type=device_type)
+            losses = estimate_loss(model=model, ctx=ctx)
             
             if device == 'cuda':
                 torch.cuda.empty_cache()
@@ -391,9 +369,6 @@ def main():
     tokens_per_iter = gradient_accumulation_steps * ddp_world_size * batch_size * block_size
     print(f"tokens per iteration will be: {tokens_per_iter:,}")
 
-    train_loader = create_dataloader('train', data_dir, block_size, batch_size, device, num_workers=num_workers)
-    val_loader = create_dataloader('val', data_dir, block_size, batch_size, device, num_workers=num_workers)
-
     if master_process:
         os.makedirs(out_dir, exist_ok=True)
     torch.manual_seed(1337 + seed_offset)
@@ -416,6 +391,8 @@ def main():
 
     model.to(device)
 
+    print_memory_usage()
+
 
     optimizer = configure_optimizers(model, weight_decay, learning_rate, [beta1, beta2], device_type)
 
@@ -429,8 +406,6 @@ def main():
         model=model,
         optimizer=optimizer,
         scheduler=scheduler,
-        train_dataloader=train_loader,
-        val_dataloader=val_loader,
         eval_interval=eval_interval,
         log_interval=log_interval,
         gradient_accumulation_steps=gradient_accumulation_steps,
@@ -447,15 +422,7 @@ def main():
 
 
 if __name__ == '__main__':
-    try:
-        with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA]) as prof:
-            with record_function("model_inference"):
-                main() 
-                pass
-        print(prof.key_averages().table())
-    except Exception as e:
-        print(prof.key_averages().table())
-        pass
+    main() 
     
     
 
