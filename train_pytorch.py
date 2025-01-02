@@ -20,8 +20,8 @@ import os
 import time
 import wandb
 
-import math
 import pickle
+import inspect
 from contextlib import nullcontext
 
 from dataloader.openWebTextDataSet import create_dataloader
@@ -36,8 +36,9 @@ from model_gpt2.scheduler import CustomLRScheduler
 from util.cpu import print_memory_usage
 from util.gpu import print_gpu_info
 from transformers import GPT2LMHeadModel, GPT2Config
-import memory_profiler
-from memory_profiler import profile
+
+from util.learning_rate import print_learning_rate
+
 
 # -----------------------------------------------------------------------------
 # default config values designed to train a gpt2 (124M) on OpenWebText
@@ -98,13 +99,11 @@ if os.path.exists(meta_path):
     meta_vocab_size = meta['vocab_size']
     print(f"found vocab_size = {meta_vocab_size} (inside {meta_path})")
 
-scaler = torch.amp.GradScaler(device=device, enabled=(dtype == 'float16'))
+scaler = torch.cuda.amp.GradScaler(enabled=(dtype == 'float16'))
+
 
 iter_num = 0
 best_val_loss = 1e9
-
-from torch.profiler import profile, record_function, ProfilerActivity
-
 
 
 def init_model(init_from='scratch'):
@@ -174,12 +173,39 @@ def configure_optimizers(self, weight_decay, learning_rate, betas, device_type):
     Returns:
         torch.optim.AdamW: The AdamW optimizer.
     """
+
+    fused_available = 'fused' in inspect.signature(torch.optim.AdamW).parameters
+
+            # start with all of the candidate parameters
+    param_dict = {pn: p for pn, p in self.named_parameters()}
+    # filter out those that do not require grad
+    param_dict = {pn: p for pn, p in param_dict.items() if p.requires_grad}
+    # create optim groups. Any parameters that is 2D will be weight decayed, otherwise no.
+    # i.e. all weight tensors in matmuls + embeddings decay, all biases and layernorms don't.
+    decay_params = [p for n, p in param_dict.items() if p.dim() >= 2]
+    nodecay_params = [p for n, p in param_dict.items() if p.dim() < 2]
+    optim_groups = [
+        {'params': decay_params, 'weight_decay': weight_decay},
+        {'params': nodecay_params, 'weight_decay': 0.0}
+    ]
+
+    num_decay_params = sum(p.numel() for p in decay_params)
+    num_nodecay_params = sum(p.numel() for p in nodecay_params)
+    print(f"num decayed parameter tensors: {len(decay_params)}, with {num_decay_params:,} parameters")
+    print(f"num non-decayed parameter tensors: {len(nodecay_params)}, with {num_nodecay_params:,} parameters")
+
+    fused_available = 'fused' in inspect.signature(torch.optim.AdamW).parameters
+
     optimizer = torch.optim.AdamW(
-        self.parameters(), 
+        optim_groups,
         lr=learning_rate, 
         betas=betas, 
-        weight_decay=weight_decay
+        weight_decay=weight_decay,
+        fused= fused_available and device_type == 'cuda'
     )
+
+    print(f"using fused AdamW: {fused_available and device_type == 'cuda'}")
+
 
     return optimizer
 
@@ -190,16 +216,16 @@ def init_wandb(wandb_log, wandb_project, wandb_run_name, config, master_process)
     wandb.init(project=wandb_project, name=wandb_run_name, config=config)
 
 @torch.no_grad()
-def estimate_loss(model, ctx):
+def estimate_loss(model, ctx, device):
     out = {}
     model.eval()
     for split in ['train', 'val']:
         losses = torch.zeros(eval_iters)
         for k in range(eval_iters):
-            X, Y = get_batch(split)
+            X, Y = get_batch(split, device_type=device)
             with ctx:
-                _, loss = model(X, Y)
-            losses[k] = loss.item()
+                output = model(X, Y)
+            losses[k] = output.loss.item()
         out[split] = losses.mean()
     model.train()
 
@@ -257,10 +283,13 @@ def train(
 
     for batch_idx in range(num_iterions):
 
-        print_memory_usage()
+        print_learning_rate(optimizer)
+
+        optimizer.zero_grad(set_to_none=True)
 
         for micro_step in range(gradient_accumulation_steps):
             X, Y = get_batch('train', device_type)
+            
             if ddp:
                 # in DDP training we only need to sync gradients at the last micro step.
                 # the official way to do this is with model.no_sync() context manager, but
@@ -271,23 +300,33 @@ def train(
                 output = model(X, labels=Y) 
                 loss = output.loss
                 loss = loss / gradient_accumulation_steps # scale the loss to account for gradient accumulation
-                scaler.scale(loss).backward()
+                with open('log_train_pytorch.txt', 'a') as f:
+                    f.write(", ".join([str(X), str(Y), str(output), str(loss)]) + "\n")
+                if scaler:
+                    scaler.scale(loss).backward()
+
+            
 
         if grad_clip != 0.0:
-            scaler.unscale_(optimizer)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+            if scaler:
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
 
         print_memory_usage()
-
-        scaler.step(optimizer)
-        scaler.update()
+        if scaler:
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            optimizer.step()
 
         scheduler.step()
+
+        print_learning_rate(optimizer)
 
 
 
         if iter_num % eval_interval == 0 and master_process:
-            losses = estimate_loss(model=model, ctx=ctx)
+            losses = estimate_loss(model=model, ctx=ctx, device=device_type)
             
             if device == 'cuda':
                 torch.cuda.empty_cache()
@@ -319,7 +358,7 @@ def train(
                     torch.save(checkpoint, os.path.join(out_dir, 'ckpt.pt'))
 
         
-        optimizer.zero_grad(set_to_none=True)
+        
 
         t1 = time.time()
         dt = t1 - t0
@@ -374,10 +413,9 @@ def main():
     torch.manual_seed(1337 + seed_offset)
     torch.backends.cuda.matmul.allow_tf32 = True # allow tf32 on matmul
     torch.backends.cudnn.allow_tf32 = True # allow tf32 on cudnn
-    device_type = 'cuda' if 'cuda' in device else 'cpu' # for later use in torch.autocast
     # note: float16 data type will automatically use a GradScaler
     ptdtype = {'float32': torch.float32, 'bfloat16': torch.bfloat16, 'float16': torch.float16}[dtype]
-    ctx = nullcontext() if device_type == 'cpu' else torch.amp.autocast(device_type=device_type, dtype=ptdtype)
+    ctx = nullcontext() if device != 'cuda' else torch.amp.autocast(device_type=device, dtype=ptdtype)
 
 
     model = init_model(init_from=init_from)
@@ -394,7 +432,7 @@ def main():
     print_memory_usage()
 
 
-    optimizer = configure_optimizers(model, weight_decay, learning_rate, [beta1, beta2], device_type)
+    optimizer = configure_optimizers(model, weight_decay, learning_rate, [beta1, beta2], device)
 
     scheduler = CustomLRScheduler(optimizer, warmup_iters=warmup_iters, lr_decay_iters=lr_decay_iters, 
                               learning_rate=learning_rate, min_lr=min_lr)
@@ -417,7 +455,7 @@ def main():
         scaler=scaler,
         master_process=master_process,
         ctx=ctx,
-        device_type=device_type
+        device_type=device
     )
 
 
