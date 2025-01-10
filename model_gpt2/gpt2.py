@@ -1,4 +1,5 @@
 from inspect import Parameter
+import math
 from typing import Iterator, Tuple
 from transformers import GPT2LMHeadModel, GPT2Config
 
@@ -20,8 +21,6 @@ class GPT2WithMFU(nn.Module):
         self.model = GPT2LMHeadModel(
             config
         )
-
-        # self.apply(self._init_weights)
 
     def _init_weights(self, module):
         if isinstance(module, nn.Linear):

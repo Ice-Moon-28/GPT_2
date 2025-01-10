@@ -87,7 +87,8 @@ def init_model(init_from='scratch'):
             resid_pdrop=dropout,
             embd_pdrop=dropout,
             attn_pdrop=dropout,
-            initializer_range=0.02
+            initializer_range=0.02,
+            scale_attn_by_inverse_layer_idx=True,
         )
 
         model = get_model(model_args)
@@ -141,7 +142,7 @@ if __name__ == '__main__':
 
    
 
-    file = open('test1.txt', 'a+')
+    file = open('test.txt', 'a+')
 
     # model = init_model(init_from='scratch')
 
@@ -150,8 +151,15 @@ if __name__ == '__main__':
     #         print(f"Parameter: {name}", file=file)
     #         print(f"Value: {param.data}", file=file)# 输出参数的张量值
 
-    model_args = dict(n_layer=n_layer, n_head=n_head, n_embd=n_embd, block_size=block_size,
-                  bias=bias, vocab_size=None, dropout=dropout)
+    model_args = dict(
+        n_layer=n_layer,
+        n_head=n_head,
+        n_embd=n_embd,
+        block_size=block_size,
+        bias=bias,
+        vocab_size=None,
+        dropout=dropout,
+    )
     
     model_args['vocab_size'] = meta_vocab_size if meta_vocab_size is not None else 50304
     gptconf = GPTConfig(**model_args)
@@ -159,7 +167,7 @@ if __name__ == '__main__':
 
 
 
-    for name, param in model.named_parameters():
-        if name.endswith('c_proj.weight'):
-            print(f"Parameter: {name}", file=file)
-            print(f"Value: {param.data}", file=file)# 输出参数的张量值
+    # for name, param in model.named_parameters():
+    #     if name.endswith('c_proj.weight'):
+    #         print(f"Parameter: {name}", file=file)
+    #         print(f"Value: {param.data}", file=file)# 输出参数的张量值

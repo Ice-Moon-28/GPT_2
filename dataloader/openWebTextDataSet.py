@@ -36,5 +36,6 @@ def create_dataloader(split, data_dir, block_size, batch_size, device_type, num_
         batch_size=batch_size,
         pin_memory=(device_type == 'cuda'),
         num_workers=num_workers,
+        prefetch_factor=2,  
     )
     return iter(dataloader)
