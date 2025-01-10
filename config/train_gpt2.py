@@ -18,7 +18,7 @@ compile = True
 # 12 batch size * 1024 block size * 5 gradaccum * 8 GPUs = 491,520
 batch_size = 16
 block_size = 1024
-gradient_accumulation_steps = 5
+gradient_accumulation_steps = 10
 
 # this makes total number of tokens be 300B
 max_iters = 600000

@@ -38,6 +38,7 @@ from util.gpu import print_gpu_info
 from transformers import GPT2LMHeadModel, GPT2Config
 
 
+
 # -----------------------------------------------------------------------------
 # default config values designed to train a gpt2 (124M) on OpenWebText
 # I/O
@@ -87,10 +88,14 @@ compile = True # use PyTorch 2.0 to compile the model to be faster
 
 enable_dataloader = True # 是否开启 dataloader 来加载数据集
 scale_attn_by_inverse_layer_idx=True
+ddp_local_rank = None
+ddp = False
+master_process = False
 
 print(
     "enable_dataloader: ", enable_dataloader,
 )
+
 
 
 config_keys = [k for k,v in globals().items() if not k.startswith('_') and isinstance(v, (int, float, bool, str))]
@@ -136,6 +141,9 @@ def init_model(init_from='scratch'):
         )
 
         model = get_model(model_args)
+
+        
+
 
     elif init_from == 'resume':
         print(f"Resuming training from {out_dir}")
@@ -398,6 +406,11 @@ def main():
 
     global gradient_accumulation_steps
     global device
+    global ddp
+    global ddp_world_size
+    global ddp_local_rank
+    global master_process
+    global compile
 
     # various inits, derived attributes, I/O setup
     ddp = int(os.environ.get('RANK', -1)) != -1 # is this a ddp run?
@@ -440,9 +453,12 @@ def main():
         print("Compiling the model is skipped due to MPS backend issues.")
     elif compile:
         print("compiling the model... (takes a ~minute)")
-        model = torch.compile(model, backend='inductor') # requires PyTorch 2.0
+        model = torch.compile(model) # requires PyTorch 2.0
 
     model.to(device)
+
+    if ddp:
+        model = DDP(model, device_ids=[ddp_local_rank])
 
 
     optimizer = configure_optimizers(model, weight_decay, learning_rate, [beta1, beta2], device)
