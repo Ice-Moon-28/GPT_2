@@ -2,8 +2,8 @@ import kagglehub
 import shutil
 import os
 
+os.environ['TMPDIR'] = '/root/autodl-tmp/data/openwebtext'
 # 设置目标路径
-target_path = '/root/autodl-tmp/data/openwebtext'
 
 # 下载数据集
 openwebtext_path = kagglehub.dataset_download('zhanglinghua011228/openwebtext')
