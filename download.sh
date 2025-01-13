@@ -1,15 +1,11 @@
-sudo apt update
-sudo apt install pipx
+sudo python3 -m pip install pipx
 pipx ensurepath
 pipx install poetry
+poetry install 
 
-
-mkdir -p /root/autodl-tmp/cache
 export HF_ENDPOINT=https://hf-mirror.com
-# pip install kaggle
-# kaggle datasets download -d zhanglinghua011228/openwebtext  -p /root/autodl-tmp/cache
-# python download_kaggle_dataset.py  /root/autodl-tmp/cache/openwebtext.zip  /root/autodl-tmp/cache
+export HF_DATASETS_CACHE=/root/autodl-tmp/cache/
+poetry run huggingface-cli login
+poetry run huggingface-cli download icemoon28/openwebtext --local-dir /root/autodl-tmp/cache/ --repo-type dataset
 
-pip install datasets==2.19.1 wandb kagglehub
-pip install tiktoken
-python3.12 data/openwebtext/prepare.py --output-dir /root/autodl-tmp/cache
+poetry run python train_pytorch.py config/train_gpt2.py 

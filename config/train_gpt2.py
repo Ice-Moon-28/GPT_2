@@ -12,7 +12,7 @@ wandb_run_name= 'run' + str(time.time())
 
 device = 'cuda'
 
-data_dir = 'data/openwebtext/1'
+data_dir = '/root/autodl-tmp/cache/'
 compile = True
 # these make the total batch size be ~0.5M
 # 12 batch size * 1024 block size * 5 gradaccum * 8 GPUs = 491,520
