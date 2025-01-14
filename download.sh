@@ -4,7 +4,6 @@ pipx install poetry
 poetry install 
 
 export HF_ENDPOINT=https://hf-mirror.com
-export HF_DATASETS_CACHE=/root/autodl-tmp/cache/
 poetry run huggingface-cli login
 poetry run huggingface-cli download icemoon28/openwebtext --local-dir /root/autodl-tmp/cache/ --repo-type dataset
 
