@@ -13,7 +13,9 @@ wandb = "^0.19.2"
 kagglehub = "^0.3.6"
 tiktoken = "^0.8.0"
 huggingface-hub = "^0.27.1"
-
+torch = "2.5.0"
+torchvision = "0.20.0"
+transformers = "^4.48.0"
 
 
 [build-system]
